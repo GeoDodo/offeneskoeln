@@ -8,7 +8,6 @@ import bson
 import re
 import urllib
 import urllib2
-import pprint
 
 from webapp import app
 

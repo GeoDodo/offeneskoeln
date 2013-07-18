@@ -23,24 +23,15 @@ im Zusammenhang mit der Software oder sonstiger Verwendung der Software
 entstanden.
 """
 
-import pprint
-import os
 import json
 import util
 import db
-import datetime
 import time
 
-from flask import Flask
 from flask import abort
-from flask import render_template
 from flask import make_response
 from flask import request
 from flask import session
-from flask import redirect
-from flask import Response
-
-import werkzeug
 
 from webapp import app
 

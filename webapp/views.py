@@ -30,11 +30,9 @@ entstanden.
 
 import pprint
 import os
-import json
 import util
 import db
 import datetime
-import time
 import urllib
 
 from flask import abort
