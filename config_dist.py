@@ -60,10 +60,6 @@ DB_USER = ''
 DB_PASS = ''
 DB_NAME = 'scrapearis'
 
-# List of all street names in the city
-# (Should soon be obsolete. See https://github.com/marians/offeneskoeln/issues/98)
-STREETS_FILE = 'data/strassen.txt'
-
 # We generate thumbnails for these attachment types
 THUMBNAILS_VALID_TYPES = ['jpg', 'pdf', 'tif', 'bmp', 'png', 'gif']
 

@@ -39,15 +39,40 @@ import re
 import datetime
 
 
+def load_streets_from_db(db):
+    locations = db.locations.find()
+    streets = []
+    for street in locations:
+        streets.append(street['name'].encode('UTF-8'))
+    return streets
+
 def generate_georeferences(db):
     """Generiert Geo-Referenzen für die gesamte submissions-Collection"""
 
-    # Submissions ohne Geo-Referenzen
-    query = {'georeferences_generated': {'$exists': False}}
+    # letztes aktualsierungsdatum
+    exist_query = {
+        'georeferences_generated': {'$exists': True}
+    }
+    latest = db.submissions.find(exist_query).sort("georeferences_generated", -1).limit(1);
+
+    for georef_date in latest:
+        last_georef = georef_date['georeferences_generated']
+
+    # wenn noch kein geobezug besthet oder wenn er existiert
+    # aber die letzte aktualisierung nach dem letzten aktualisieren lag
+    query = {'$or':
+        [
+            {'georeferences_generated': {'$exists': False}},
+            {'$and':
+                [
+                    {'georeferences_generated': {'$exists': True}},
+                    {'last_modified': { '$gt': last_georef}}
+                ]
+            }
+        ]
+    }
     for doc in db.submissions.find(query):
         generate_georeferences_for_submission(doc['_id'], db)
-    # TODO: Aktualisierte Dokumente berücksichtigen
-
 
 def generate_georeferences_for_submission(doc_id, db):
     """
@@ -57,6 +82,7 @@ def generate_georeferences_for_submission(doc_id, db):
     """
     submission = db.submissions.find_one({'_id': doc_id})
     text = ''
+
     if 'attachments' in submission and len(submission['attachments']) > 0:
         for a in submission['attachments']:
             text += " " + get_attachment_fulltext(a.id)
@@ -64,18 +90,16 @@ def generate_georeferences_for_submission(doc_id, db):
         text += " " + submission['title']
     if 'subject' in submission:
         text += " " + submission['subject']
-    text = text.encode('utf-8')
-    result = match_streets(text)
-    now = datetime.datetime.utcnow()
+    result = match_streets(text.encode('utf-8'))
     update = {
         '$set': {
-            'georeferences_generated': now
+            'georeferences_generated': datetime.datetime.utcnow(),
         }
     }
+
     if result != []:
         update['$set']['georeferences'] = result
-        print ("Writing %d georeferences to submission %s" %
-            (len(result), doc_id))
+        print ("Writing %d georeferences to submission %s" % (len(result), doc_id))
     db.submissions.update({'_id': doc_id}, update)
 
 
@@ -89,13 +113,11 @@ def get_attachment_fulltext(attachment_id):
     return ''
 
 
-def load_streets(path):
+def load_alternative_street_names(nameslist):
     """
-    Lädt eine Straßenliste (ein Eintrag je Zeile UTF-8)
-    in ein Dict. Dabei werden verschiedene Synonyme für
+    Dabei werden verschiedene Synonyme für
     Namen, die auf "straße" oder "platz" enden, angelegt.
     """
-    nameslist = open(path, 'r').read().strip().split("\n")
     ret = {}
     pattern1 = re.compile(".*straße$")
     pattern2 = re.compile(".*Straße$")
@@ -142,7 +164,8 @@ def match_streets(text):
 
 
 if __name__ == '__main__':
-    streets = load_streets(config.STREETS_FILE)
     connection = MongoClient(config.DB_HOST, config.DB_PORT)
     db = connection[config.DB_NAME]
+    streetlist = load_streets_from_db(db)
+    streets = load_alternative_street_names(streetlist)
     generate_georeferences(db)
