@@ -27,6 +27,9 @@ im Zusammenhang mit der Software oder sonstiger Verwendung der Software
 entstanden.
 """
 
+import sys
+sys.path.append('./')
+
 from pymongo import MongoClient
 import config
 
@@ -38,7 +41,7 @@ if __name__ == '__main__':
     modification = {
         '$unset': {
             'thumbnails': 1,
-            'thumbnails_created': 1
+            'thumbnails_generated': 1
         }
     }
     for doc in db.attachments.find(query):

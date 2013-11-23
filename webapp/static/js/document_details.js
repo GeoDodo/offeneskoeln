@@ -61,23 +61,25 @@ $(document).ready(function(){
         thumbs_data = {};
         $.each(data.response.documents[0].attachments, function(i, attachment){
             thumbs_data[attachment._id] = {};
-            $.each(attachment.thumbnails, function(height, heightthumbs){
-                if (height == 300 || height == 800) {
-                    thumbs_data[attachment._id][height] = {
-                        num_thumbs: 0,
-                        width: 0,
-                        images: []
-                    };
-                    $.each(attachment.thumbnails[height], function(index, thumb){
-                        thumbs_data[attachment._id][height].num_thumbs += 1;
-                        thumbs_data[attachment._id][height].width += thumb.width + 11;
-                        thumbs_data[attachment._id][height].images.push({
-                            width: thumb.width,
-                            url: thumb.url
+            if (typeof attachment.thumbnails !== 'undefined') {
+                $.each(attachment.thumbnails, function(height, heightthumbs){
+                    if (height == 300 || height == 800) {
+                        thumbs_data[attachment._id][height] = {
+                            num_thumbs: 0,
+                            width: 0,
+                            images: []
+                        };
+                        $.each(attachment.thumbnails[height], function(index, thumb){
+                            thumbs_data[attachment._id][height].num_thumbs += 1;
+                            thumbs_data[attachment._id][height].width += thumb.width + 11;
+                            thumbs_data[attachment._id][height].images.push({
+                                width: thumb.width,
+                                url: thumb.url
+                            });
                         });
-                    });
-                }
-            });
+                    }
+                });
+            }
         });
     }
 
@@ -102,10 +104,26 @@ $(document).ready(function(){
         });
     }
 
+    /**
+     * Blendet einen zusätzlichen Download-Button je Attachment ein
+     * (Wir machen das in JavaScript, um Robots möclichst von den URLs
+     * fern zu halten.)
+     */
+    function enhanceDownloadLinks() {
+        $('div.attachment').each(function(i, item){
+            //console.log(i, item, this);
+            var openButton = $(this).find('a.open');
+            var downloadUrl = openButton.attr('href');
+            downloadUrl = downloadUrl.replace('anhang/', 'anhang/download/');
+            $(this).find('a.download').attr('href', downloadUrl).show();
+        });
+    }
+
     OffenesKoeln.documentDetails(ok_document_id, function(data){
         //console.log(data);
         readThumbnailData(data);
         enhanceThumbnails();
+        enhanceDownloadLinks();
     });
 
     truncateFulltext();

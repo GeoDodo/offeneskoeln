@@ -84,6 +84,8 @@ import shutil
 from PIL import Image
 import datetime
 import time
+import threading
+import argparse
 
 
 STATS = {
@@ -102,31 +104,35 @@ STATS = {
 
 # Aktiviert die Zeitmessung
 TIMING = True
+TIMEOUT = 10
 
 
-def generate_thumbs(db, thumbs_folder):
+def generate_thumbs(db, thumbs_folder, timeout):
     """Generiert alle Thumbnails für die gesamte attachments-Collection"""
     # Attachments mit veralteten Thumbnails
     query = {
         'thumbnails_generated': {'$exists': True},
-        'depublication': {'$exists': False}
+        'depublication': {'$exists': False},
+        'mimetype': 'application/pdf'
     }
+    # Attachments mit veralteten Thumbnails
     for doc in db.attachments.find(query, timeout=False):
         # Dateiinfo abholen
         filedoc = db.fs.files.find_one({'_id': doc['file'].id})
         if filedoc['uploadDate'] > doc['thumbnails_generated']:
             # Thumbnails müssen erneuert werden
             STATS['attachments_with_outdated_thumbs'] += 1
-            generate_thumbs_for_attachment(doc['_id'], db)
+            generate_thumbs_for_attachment(doc['_id'], db, timeout)
     # Attachments ohne Thumbnails
     query = {
         'thumbnails': {'$exists': False},
-        'depublication': {'$exists': False}
+        'depublication': {'$exists': False},
+        'mimetype': 'application/pdf'
     }
     for doc in db.attachments.find(query, timeout=False):
         if get_file_suffix(doc['filename']) in config.THUMBNAILS_VALID_TYPES:
             STATS['attachments_without_thumbs'] += 1
-            generate_thumbs_for_attachment(doc['_id'], db)
+            generate_thumbs_for_attachment(doc['_id'], db, timeout)
 
 
 def get_file_suffix(filename):
@@ -142,7 +148,7 @@ def subfolders_for_attachment(attachment_id):
         attachment_id)
 
 
-def generate_thumbs_for_attachment(attachment_id, db):
+def generate_thumbs_for_attachment(attachment_id, db, timeout):
     """
     Generiert alle Thumbnails fuer ein bestimmtes Attachment
     """
@@ -175,21 +181,39 @@ def generate_thumbs_for_attachment(attachment_id, db):
     file_path = max_folder + os.sep + '%d.png'
     cmd = ('%s -dQUIET -dSAFER -dBATCH -dNOPAUSE -sDisplayHandle=0 -sDEVICE=png16m -r100 -dTextAlphaBits=4 -sOutputFile=%s -f %s' %
             (config.GS_CMD, file_path, temppath))
-    execute(cmd)
+    pm = ProcessMonitor(cmd)
+    result = pm.run(timeout=timeout)
+
     if TIMING:
         after_maxthumbs = milliseconds()
         maxthumbs_duration = after_maxthumbs - after_file_write
         STATS['ms_creating_maxsize'] += maxthumbs_duration
         STATS['num_creating_maxsize'] += 1
 
+    if result == False:
+        # break here
+        STATS['thumbs_not_created'] += 1
+        os.unlink(temppath)
+        return
+
     thumbnails = {}
     for size in config.THUMBNAILS_SIZES:
         thumbnails[str(size)] = []
 
-    # create thumbs based on large pixel version
-    for maxfile in os.listdir(max_folder):
-        path = max_folder + os.sep + maxfile
-        num = maxfile.split('.')[0]
+    ### create thumbs based on large pixel version
+
+    # get highest page number
+    maxfiles = os.listdir(max_folder)
+    max_pagenum = 0
+    for mfile in maxfiles:
+        num = int(mfile.split('.')[0])
+        max_pagenum = max(max_pagenum, num)
+
+    for pagenum in range(1, max_pagenum + 1):
+        path = max_folder + os.sep + str(pagenum) + '.png'
+        if not os.path.exists(path):
+            sys.stderr.write('Page thumbnail missing: page %d' % pagenum)
+            continue
         im = Image.open(path)
         im = conditional_to_greyscale(im)
         (owidth, oheight) = im.size
@@ -199,7 +223,7 @@ def generate_thumbs_for_attachment(attachment_id, db):
             size_folder = abspath + os.sep + str(size)
             if not os.path.exists(size_folder):
                 os.makedirs(size_folder)
-            out_path = size_folder + os.sep + num + '.' + config.THUMBNAILS_SUFFIX
+            out_path = size_folder + os.sep + str(pagenum) + '.' + config.THUMBNAILS_SUFFIX
             (width, height) = scale_width_height(size, owidth, oheight)
             #print (width, height)
             # Two-way resizing
@@ -210,7 +234,7 @@ def generate_thumbs_for_attachment(attachment_id, db):
             resizedim = resizedim.resize((width, height), Image.ANTIALIAS)
             resizedim.save(out_path)
             thumbnails[str(size)].append({
-                'page': int(num),
+                'page': pagenum,
                 'width': width,
                 'height': height,
                 'filesize': os.path.getsize(out_path)
@@ -266,15 +290,6 @@ def scale_width_height(height, original_width, original_height):
     return (width, height)
 
 
-def execute(cmd):
-    output, error = subprocess.Popen(
-        cmd.split(' '), stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE).communicate()
-    if error is not None and error.strip() != '':
-        print >> sys.stderr, "Command: " + cmd
-        print >> sys.stderr, "Error: " + error
-
-
 def milliseconds():
     """Return current time as milliseconds int"""
     return int(round(time.time() * 1000))
@@ -284,11 +299,48 @@ def print_stats():
     for key in STATS.keys():
         print "%s: %d" % (key, STATS[key])
 
+
+class ProcessMonitor(object):
+    """
+    Gratefully taken from
+    http://stackoverflow.com/a/4825933/1228491
+    """
+    def __init__(self, cmd):
+        self.cmd = cmd
+        self.process = None
+
+    def run(self, timeout):
+        def target():
+            self.process = subprocess.Popen(self.cmd,
+                shell=True
+                #,stdout=subprocess.PIPE,
+                #,stderr=subprocess.PIPE
+            )
+            output, error = self.process.communicate()
+            #if error is not None and error.strip() != '':
+            #    sys.stderr.write("Command: %s\n" % self.cmd)
+            #    sys.stderr.write("Error: %s\n" % error)
+        thread = threading.Thread(target=target)
+        thread.start()
+        thread.join(timeout)
+        if thread.is_alive():
+            sys.stderr.write("Process taking too long -- terminating\n")
+            self.process.kill()
+            thread.join()
+            # Process has been interrupted
+            return False
+        return True
+
+
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Generate thumbnails for attachment files')
+    parser.add_argument('--timeout', dest='timeout', default=TIMEOUT, type=int,
+        help='Number of seconds to wait for thumbnail generation per attachment')
+    args = parser.parse_args()
     connection = MongoClient(config.DB_HOST, config.DB_PORT)
     db = connection[config.DB_NAME]
     fs = gridfs.GridFS(db)
     tempdir = tempfile.mkdtemp()
-    generate_thumbs(db, config.THUMBS_PATH)
+    generate_thumbs(db, config.THUMBS_PATH, timeout=args.timeout)
     os.rmdir(tempdir)
     print_stats()

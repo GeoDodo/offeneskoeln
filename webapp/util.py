@@ -8,6 +8,7 @@ import bson
 import re
 import urllib
 import urllib2
+from pprint import pprint
 
 from webapp import app
 
@@ -72,33 +73,33 @@ def geocode(location_string):
         street = postal_matching.group(1)
         postal = postal_matching.group(2)
     url = 'http://open.mapquestapi.com/nominatim/v1/search.php'
+    city = app.config['GEOCODING_DEFAULT_CITY']
+    if type(city) == unicode:
+        city = city.encode('utf8')
     params = {'format': 'json',  # json
-              'q': ' '.join([street, app.config['GEOCODING_DEFAULT_CITY']]),
+              'q': ' '.join([street, city]),
               'addressdetails': 1,
               'accept-language': 'de_DE',
               'countrycodes': app.config['GEOCODING_DEFAULT_COUNTRY']}
     request = urllib2.urlopen(url + '?' + urllib.urlencode(params))
     response = request.read()
     addresses = json.loads(response)
+    pprint(addresses)
     addresses_out = []
-    for n in range(len(addresses)):
-        for key in addresses[n].keys():
+    for address in addresses:
+        for key in address.keys():
             if key in ['address', 'boundingbox', 'lat', 'lon', 'osm_id']:
                 continue
-            del addresses[n][key]
-        # skip if no road contained
-        if 'road' not in addresses[n]['address']:
-            continue
+            del address[key]
         # skip if not in correct county
-        if 'county' not in addresses[n]['address']:
+        if 'county' not in address['address']:
             continue
-        if addresses[n]['address']['county'] != app.config['GEOCODING_FILTER_COUNTY']:
+        if address['address']['county'] != app.config['GEOCODING_FILTER_COUNTY']:
             continue
         if postal is not None:
-            if 'postcode' in addresses[n]['address'] and addresses[n]['address']['postcode'] == postal:
-                addresses_out.append(addresses[n])
-        else:
-            addresses_out.append(addresses[n])
+            if 'postcode' in address['address'] and address['address']['postcode'] != postal:
+                continue
+        addresses_out.append(address)
     return addresses_out
 
 

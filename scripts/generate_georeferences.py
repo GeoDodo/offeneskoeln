@@ -42,11 +42,29 @@ import datetime
 def generate_georeferences(db):
     """Generiert Geo-Referenzen für die gesamte submissions-Collection"""
 
-    # Submissions ohne Geo-Referenzen
+    # Aktualisiere Vorlagen mit Geo-Referenzen
+    query = {
+        'georeferences_generated': {'$exists': True},
+        'attachments': {'$exists': True}
+    }
+    for doc in db.submissions.find(query, timeout=False):
+        update = False
+        for attachment_dbref in doc['attachments']:
+            attachment = db[attachment_dbref.collection].find_one(
+                {'_id': attachment_dbref.id},
+                {'fulltext_generated': 1}
+            )
+            if 'fulltext_generated' not in attachment:
+                continue
+            if attachment['fulltext_generated'] > doc['georeferences_generated']:
+                update = True
+                break
+        if update:
+            generate_georeferences_for_submission(doc['_id'], db)
+    # Bearbeite Submissions ohne Geo-Referenzen
     query = {'georeferences_generated': {'$exists': False}}
-    for doc in db.submissions.find(query):
+    for doc in db.submissions.find(query, timeout=False):
         generate_georeferences_for_submission(doc['_id'], db)
-    # TODO: Aktualisierte Dokumente berücksichtigen
 
 
 def generate_georeferences_for_submission(doc_id, db):
@@ -76,6 +94,8 @@ def generate_georeferences_for_submission(doc_id, db):
         update['$set']['georeferences'] = result
         print ("Writing %d georeferences to submission %s" %
             (len(result), doc_id))
+    else:
+        print "0 georeferences for submission %s" % doc_id
     db.submissions.update({'_id': doc_id}, update)
 
 
@@ -89,13 +109,20 @@ def get_attachment_fulltext(attachment_id):
     return ''
 
 
-def load_streets(path):
+def load_streets():
     """
     Lädt eine Straßenliste (ein Eintrag je Zeile UTF-8)
     in ein Dict. Dabei werden verschiedene Synonyme für
     Namen, die auf "straße" oder "platz" enden, angelegt.
     """
-    nameslist = open(path, 'r').read().strip().split("\n")
+    # Jede Straße nur einmal in nameslist laden
+    namesdict = {}
+    query = {"rs": config.RS}
+    for street in db.locations.find(query, timeout=False):
+        if street['name'] not in namesdict:
+            namesdict[street['name']] = True
+    nameslist = namesdict.keys()
+    del namesdict
     ret = {}
     pattern1 = re.compile(".*straße$")
     pattern2 = re.compile(".*Straße$")
@@ -142,7 +169,7 @@ def match_streets(text):
 
 
 if __name__ == '__main__':
-    streets = load_streets(config.STREETS_FILE)
     connection = MongoClient(config.DB_HOST, config.DB_PORT)
     db = connection[config.DB_NAME]
+    streets = load_streets()
     generate_georeferences(db)
